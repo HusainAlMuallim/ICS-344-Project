@@ -1,0 +1,244 @@
+\documentclass[12pt]{report}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{ragged2e}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage[hidelinks]{hyperref}
+\usepackage{caption}
+
+\captionsetup{font=small}
+\setlist[itemize]{leftmargin=*,itemsep=0.35em}
+\setlist[enumerate]{leftmargin=*,itemsep=0.35em}
+\setlength{\parskip}{0.6em}
+\setlength{\parindent}{0pt}
+\renewcommand{\arraystretch}{1.25}
+
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{placeholdergray}{RGB}{110,110,110}
+
+\lstdefinestyle{reportcode}{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\newcolumntype{Y}{>{\RaggedRight\arraybackslash}X}
+\newcommand{\placeholder}[1]{\textcolor{placeholdergray}{\textit{#1}}}
+\newcommand{\evidencebox}[1]{
+  \begin{figure}[H]
+    \centering
+    \fbox{\rule{0pt}{2.1in}\rule{0.88\textwidth}{0pt}}
+    \caption{#1}
+  \end{figure}
+}
+
+\newcommand{\lessonchapter}[3]{
+  \chapter{Lesson #1: #2}
+
+  \section{Part 1: Goal and Vulnerability Summary}
+  \placeholder{State the vulnerability type, main affected component, security impact, and the expected safe behavior for #2.}
+
+  \section{Part 2: Why This Works / Root Cause}
+  \placeholder{Explain the security mistake that makes this #3 issue possible. Keep this conceptual and focused on root cause rather than symptoms.}
+
+  \section{Part 3: Environment and Setup}
+  \begin{itemize}
+    \item DVSA Website URL / API endpoint: \placeholder{Fill in the exact endpoint or page used.}
+    \item AWS services involved: \placeholder{For example API Gateway, Lambda, Cognito, S3, DynamoDB, SQS, IAM.}
+    \item Relevant function, role, or log group: \placeholder{Name the exact resources used in this lesson.}
+    \item User or test context: \placeholder{Attacker, victim, admin, or anonymous context as applicable.}
+    \item Tools used: \placeholder{Browser DevTools, curl, jq, AWS Console, AWS CLI, Policy Simulator, CloudWatch, etc.}
+  \end{itemize}
+
+  \section{Part 4: Reproduction Steps}
+  \begin{enumerate}
+    \item \placeholder{Describe the baseline or normal behavior first.}
+    \item \placeholder{List the exact steps that trigger the vulnerability.}
+    \item \placeholder{Include the request, timing, role, or payload details needed for reproducibility.}
+    \item \placeholder{Record the observable result that proves the issue.}
+  \end{enumerate}
+
+  \section{Part 5: Evidence and Proof}
+  \begin{itemize}
+    \item \placeholder{Attach the strongest pre-fix evidence for this lesson.}
+    \item \placeholder{Use only evidence that directly proves the claim.}
+    \item \placeholder{Redact real tokens, secrets, and temporary credentials before submission.}
+  \end{itemize}
+  \evidencebox{Replace with pre-fix evidence for Lesson #1 (#2).}
+
+  \section{Part 6: Fix Strategy / Probable Mitigation}
+  \begin{itemize}
+    \item Fix location: \placeholder{Identify the backend, IAM, cloud configuration, or workflow layer that must change.}
+    \item Security property restored: \placeholder{For example authentication integrity, authorization, least privilege, or safe input handling.}
+    \item Why this addresses root cause: \placeholder{Explain why the fix is real and not cosmetic.}
+  \end{itemize}
+
+  \section{Part 7: Code / Config Changes}
+  \placeholder{Paste the real code diff, policy change, CloudFormation change, or configuration update below.}
+
+  \begin{figure}[H]
+    \centering
+    \fbox{
+      \parbox{0.88\textwidth}{
+        \vspace{0.4em}
+        \placeholder{Replace this box with the actual diff, code snippet, policy JSON, or configuration change.}
+        \vspace{2.0in}
+      }
+    }
+    \caption{Replace with the concrete code or configuration change for Lesson #1.}
+  \end{figure}
+
+  \section{Part 8: Verification After Fix}
+  \begin{enumerate}
+    \item \placeholder{Repeat the same test that proved the vulnerability.}
+    \item \placeholder{Show that the exploit no longer succeeds.}
+    \item \placeholder{Also show that normal intended behavior still works.}
+  \end{enumerate}
+  \evidencebox{Replace with post-fix verification evidence for Lesson #1 (#2).}
+
+  \section{Part 9: Structured Operation and Security Analysis}
+  \subsection*{Table A}
+  \begin{table}[H]
+    \small
+    \centering
+    \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|}
+      \hline
+      \textbf{Intended rule(s)} & \textbf{Artifacts used to infer the rule} & \textbf{Normal evidence} & \textbf{Exploit evidence} \\
+      \hline
+      \placeholder{State the intended security or workflow rule.} &
+      \placeholder{Identify the source used to infer the rule: UI flow, code path, IAM policy, logs, helper guide, etc.} &
+      \placeholder{Show normal behavior when the rule is respected.} &
+      \placeholder{Show behavior proving the rule was violated.} \\
+      \hline
+    \end{tabularx}
+  \end{table}
+
+  \subsection*{Table B}
+  \begin{table}[H]
+    \footnotesize
+    \centering
+    \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|Y|}
+      \hline
+      \textbf{Why the exploit is a deviation} & \textbf{Deviation class} & \textbf{Fix applied} & \textbf{Post-fix verification} & \textbf{Optional latency / timing note} \\
+      \hline
+      \placeholder{Explain why the observed result violates the intended rule.} &
+      \placeholder{Examples: authentication failure, access control failure, unsafe input handling, logic flaw, DoS, excessive privilege.} &
+      \placeholder{Summarize the real corrective action.} &
+      \placeholder{Describe the evidence that the deviation is closed.} &
+      \placeholder{Use this only when timing or latency matters.} \\
+      \hline
+    \end{tabularx}
+  \end{table}
+
+  \section{Part 10: Takeaway / Lessons Learned}
+  \placeholder{End with a short security lesson that ties the #3 weakness back to serverless design, AWS service interaction, and secure engineering practice.}
+
+  \clearpage
+}
+
+% Fill in these fields before compiling the final report.
+\newcommand{\CourseCode}{ICS-344}
+\newcommand{\CourseTitle}{Information Security}
+\newcommand{\CourseSection}{Section 1 \& 2}
+\newcommand{\CourseTerm}{252}
+\newcommand{\ProjectTitle}{DVSA Vulnerability Discovery and Remediation}
+\newcommand{\StudentNames}{Husain Al Muallim, Ali Al Qatari}
+\newcommand{\StudentIDs}{202163730, 202279780}
+\newcommand{\DVSAWebsiteURL}{\placeholder{https://your-dvsa-site.example}}
+\newcommand{\AWSRegion}{us-east-1}
+\newcommand{\SubmissionDate}{\placeholder{Submission date}}
+
+\begin{document}
+
+\hypersetup{pageanchor=false}
+\begin{titlepage}
+  \centering
+  {\Large King Fahd University of Petroleum and Minerals\par}
+  \vspace{1.2cm}
+  {\Large \CourseCode\ - \CourseTitle\par}
+  {\large \CourseSection\par}
+  \vspace{1.4cm}
+  {\huge \bfseries \ProjectTitle\par}
+  \vspace{1.4cm}
+
+  \begin{tabular}{rl}
+    Term: & \CourseTerm \\
+    Student Name(s): & \StudentNames \\
+    Student ID(s): & \StudentIDs \\
+    DVSA Website URL: & \DVSAWebsiteURL \\
+    AWS Region: & \AWSRegion \\
+    Date: & \SubmissionDate \\
+  \end{tabular}
+
+  \vfill
+  {\large Project Report\par}
+\end{titlepage}
+
+\clearpage
+\hypersetup{pageanchor=true}
+\pagenumbering{roman}
+\tableofcontents
+\clearpage
+
+\chapter*{Project Overview}
+\addcontentsline{toc}{chapter}{Project Overview}
+
+\section*{Scope}
+\placeholder{Summarize the project scope: deployment in a non-production AWS account, the 10 official lessons, remediation, and verification.}
+
+\section*{Deployment Summary}
+\begin{itemize}
+  \item DVSA Website URL: \DVSAWebsiteURL
+  \item AWS region: \AWSRegion
+  \item CloudFormation stack: \placeholder{Stack name}
+  \item Main services used: \placeholder{S3, API Gateway, Lambda, DynamoDB, SQS, Cognito, IAM, CloudWatch}
+\end{itemize}
+
+\section*{Architecture and Request Pipeline}
+\placeholder{Explain the intended high-level request flow from browser to API Gateway to Lambda to backend services and back.}
+\evidencebox{Optional architecture figure or request-flow diagram.}
+
+\section*{Methodology and Evidence Sources}
+\begin{itemize}
+  \item \placeholder{How the environment was validated before testing.}
+  \item \placeholder{What tools were used to reproduce and verify vulnerabilities.}
+  \item \placeholder{How evidence was captured and redacted.}
+  \item \placeholder{How fixes were verified after remediation.}
+\end{itemize}
+
+\clearpage
+\pagenumbering{arabic}
+
+\lessonchapter{01}{Event Injection}{unsafe input handling}
+\lessonchapter{02}{Broken Authentication}{authentication failure}
+\lessonchapter{03}{Sensitive Information Disclosure}{sensitive data exposure}
+\lessonchapter{04}{Insecure Cloud Configuration}{cloud misconfiguration}
+\lessonchapter{05}{Broken Access Control}{authorization failure}
+\lessonchapter{06}{Denial of Service}{availability failure}
+\lessonchapter{07}{Over-Privileged Function}{excessive IAM privilege}
+\lessonchapter{08}{Logic Vulnerabilities}{workflow or race-condition failure}
+\lessonchapter{09}{Vulnerable Dependencies}{dependency risk}
+\lessonchapter{10}{Unhandled Exceptions}{unsafe error handling}
+
+\chapter*{Optional Bonus Findings}
+\addcontentsline{toc}{chapter}{Optional Bonus Findings}
+\placeholder{Use this section only if you discover valid additional findings beyond the 10 official lessons. Repeat the same reporting discipline if you include bonus work.}
+
+\chapter*{Conclusion}
+\addcontentsline{toc}{chapter}{Conclusion}
+\placeholder{Summarize the project outcomes, the most important remediation themes, and the main security lessons learned from DVSA.}
+
+\end{document}

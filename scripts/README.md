@@ -1,10 +1,10 @@
-# Scripts Area
+# Scripts
 
-Use this directory only for small helper tooling that supports your own DVSA deployment.
+Helper scripts for exploit reproduction, verification, and testing.
 
-Subdirectories:
-- `helpers/`: one-off utilities
-- `replay/`: repeatable exploit or verification requests
-- `load-tests/`: bounded, course-safe load checks for Lesson 6
+Examples of what to put here:
+- `curl` replay scripts for pre-fix and post-fix API requests
+- JWT decode/forge helper (Python)
+- Load-test script for Lesson 6 (keep short and bounded)
 
-Document each script before relying on it in the report.
+Document each script with a comment header explaining its purpose.

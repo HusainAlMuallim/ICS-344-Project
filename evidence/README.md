@@ -1,15 +1,14 @@
-# Evidence Rules
+# Evidence
 
-Use the same discipline for every lesson:
-- save raw evidence immediately after each test
-- keep a short note describing what each artifact proves
-- create sanitized copies before anything goes into the report or slides
-- use consistent names such as `L02-pre-fix-orders-response.png`
+Each `lesson-XX/` folder stores screenshots, terminal output, and log captures for that lesson.
 
-Minimum capture set per lesson:
-1. request or action taken
-2. result proving the issue
-3. code/config change or policy change
-4. post-fix result proving closure
+**Per-lesson minimum:**
+1. Request or action taken (pre-fix)
+2. Result proving the vulnerability
+3. Code/config change applied
+4. Post-fix result proving the fix works
 
-Keep lesson-specific evidence inside `lesson-01` through `lesson-10`.
+**Rules:**
+- Redact real tokens, AWS keys, and passwords before committing.
+- Use descriptive filenames, e.g. `pre-fix-cloudwatch.png`, `post-fix-response.png`.
+- `bonus/` is for any additional vulnerabilities beyond the 10 official lessons.

@@ -28,7 +28,7 @@ coverage/
 venv/
 __pycache__/
 
-screenshots/raw/*
-!screenshots/raw/.gitkeep
-
 tmp/
+secrets.pdf
+secrets.tex
+notes/

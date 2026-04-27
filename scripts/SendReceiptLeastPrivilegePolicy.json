@@ -1,0 +1,39 @@
+// the new policy, the 3 which were provided are deleted and replaced with this one [lesson 7]
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowReceiptBucketReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::dvsa-receipts-bucket-145292399251-us-east-1/*"
+    },
+    {
+      "Sid": "AllowReceiptBucketMetadataOnly",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::dvsa-receipts-bucket-145292399251-us-east-1"
+    },
+    {
+      "Sid": "AllowSendReceiptEmailOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ses:SendEmail",
+        "ses:SendRawEmail"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowGetCallerIdentityIfUsed",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

@@ -216,26 +216,25 @@
 \addcontentsline{toc}{chapter}{Project Overview}
 
 \section*{Scope}
-\placeholder{Summarize the project scope: deployment in a non-production AWS account, the 10 official lessons, remediation, and verification.}
+This project involves deploying the Damn Vulnerable Serverless Application (DVSA) into a non-production AWS account, systematically exploiting 10 official vulnerability lessons, applying remediations, and verifying fixes. All work was performed in a controlled environment with no impact on production systems.
 
 \section*{Deployment Summary}
 \begin{itemize}
   \item DVSA Website URL: \DVSAWebsiteURL
   \item AWS region: \AWSRegion
-  \item CloudFormation stack: \placeholder{Stack name}
-  \item Main services used: \placeholder{S3, API Gateway, Lambda, DynamoDB, SQS, Cognito, IAM, CloudWatch}
+  \item CloudFormation stack: \texttt{serverlessrepo-OWASP-DVSA}
+  \item Main services used: S3, API Gateway, Lambda, DynamoDB, SQS, Cognito, IAM, CloudWatch, SES, CloudTrail
 \end{itemize}
 
 \section*{Architecture and Request Pipeline}
-\placeholder{Explain the intended high-level request flow from browser to API Gateway to Lambda to backend services and back.}
-\evidenceplaceholder{Optional architecture figure or request-flow diagram.}{Architecture figure or request-flow diagram}
+The DVSA follows a standard serverless architecture. The browser loads the static frontend from an S3 bucket. User actions trigger HTTP requests to API Gateway, which routes them to backend Lambda functions (e.g., \texttt{DVSA-ORDER-MANAGER}). These functions interact with DynamoDB for persistence, SQS for async processing, Cognito for authentication, and S3 for file storage. Responses flow back through API Gateway to the client.
 
 \section*{Methodology and Evidence Sources}
 \begin{itemize}
-  \item \placeholder{How the environment was validated before testing.}
-  \item \placeholder{What tools were used to reproduce and verify vulnerabilities.}
-  \item \placeholder{How evidence was captured and redacted.}
-  \item \placeholder{How fixes were verified after remediation.}
+  \item Environment validated by confirming DVSA website loads, user registration works, and orders can be placed end-to-end.
+  \item Tools used: \texttt{curl}, Python \texttt{requests}, Browser DevTools, AWS Console, AWS CLI, IAM Policy Simulator, and CloudWatch Logs.
+  \item Evidence captured via screenshots and terminal output; real tokens and AWS keys redacted before commit.
+  \item Fixes verified by re-running the same exploit and confirming failure, then confirming normal workflow still succeeds.
 \end{itemize}
 
 \clearpage
@@ -345,22 +344,680 @@ The following lines were modified:
 
 \section{Part 10: Takeaway / Lessons Learned}
 The primary takeaway is that user input should never be trusted, and development environments must never evaluate or execute code passed via external APIs. When handling serialized data like JSON, native and strictly typed parsers (like \texttt{JSON.parse()}) must be used instead of third-party libraries that rely on dynamic evaluation (like \texttt{eval()}). Furthermore, auditing dependencies for known vulnerabilities is critical for maintaining serverless security.
-% \lessonchapter{02}{Broken Authentication}{authentication failure}
-% \lessonchapter{03}{Sensitive Information Disclosure}{sensitive data exposure}
-% \lessonchapter{04}{Insecure Cloud Configuration}{cloud misconfiguration}
-% \lessonchapter{05}{Broken Access Control}{authorization failure}
-% \lessonchapter{06}{Denial of Service}{availability failure}
-% \lessonchapter{07}{Over-Privileged Function}{excessive IAM privilege}
-% \lessonchapter{08}{Logic Vulnerabilities}{workflow or race-condition failure}
-% \lessonchapter{09}{Vulnerable Dependencies}{dependency risk}
-% \lessonchapter{10}{Unhandled Exceptions}{unsafe error handling}
 
-\chapter*{Optional Bonus Findings}
-\addcontentsline{toc}{chapter}{Optional Bonus Findings}
-\placeholder{Use this section only if you discover valid additional findings beyond the 10 official lessons. Repeat the same reporting discipline if you include bonus work.}
+\clearpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Lesson 02: Broken Authentication}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Part 1: Goal and Vulnerability Summary}
+The objective is to exploit a broken authentication mechanism in the API Gateway to access admin-only functionality without proper authorization. The \texttt{/order} endpoint accepts any token (including non-admin tokens) and processes \texttt{admin-orders} requests without verifying the caller's admin status at the gateway level. This allows a regular user to retrieve all users' order data.
+
+\section{Part 2: Why This Works / Root Cause}
+The API Gateway \texttt{/order} POST method had no authorizer attached. Any request carrying any JWT---valid or forged---was forwarded directly to the \texttt{DVSA-ORDER-MANAGER} Lambda. The Lambda's original code did not validate the \texttt{custom:is\_admin} Cognito attribute before dispatching admin actions, meaning a regular user could call \texttt{"action":"admin-orders"} and receive all order records.
+
+\section{Part 3: Environment and Setup}
+\begin{itemize}
+  \item API endpoint: \url{https://shfz8h7a28.execute-api.us-east-1.amazonaws.com/Stage/order}
+  \item AWS services involved: API Gateway, Lambda, Cognito User Pool.
+  \item Relevant function: \texttt{DVSA-ORDER-MANAGER}; Cognito pool: \texttt{dvsa-user-pool}.
+  \item User or test context: Authenticated regular (non-admin) user.
+  \item Tools used: Terminal (\texttt{curl}), AWS Console (API Gateway, Cognito).
+\end{itemize}
+
+\section{Part 4: Reproduction Steps}
+\begin{enumerate}
+  \item Logged in as a regular user and obtained the JWT from the browser.
+  \item Sent a \texttt{curl} POST to \texttt{/order} with the body \texttt{\{"action":"admin-orders","data":""\}} and the regular user's token.
+  \item The API returned \texttt{\{"status":"ok","orders":[...]\}} containing all users' order data, proving the admin endpoint was accessible without admin privileges.
+\end{enumerate}
+
+\section{Part 5: Evidence and Proof}
+\begin{itemize}
+  \item Terminal output showing a successful \texttt{admin-orders} response with order data from other users.
+\end{itemize}
+\evidencebox{../evidence/lesson-02/1_exploit_success.png}{Regular user successfully calling admin-orders endpoint}
+\evidencebox{../evidence/lesson-02/another exploit success .png}{Exploit returning another user's full order details}
+
+\section{Part 6: Fix Strategy / Probable Mitigation}
+\begin{itemize}
+  \item Fix location: (1) API Gateway---attach the \texttt{DVSA-Cognito-Authorizer} to the \texttt{/order} POST method. (2) Lambda code---check \texttt{custom:is\_admin} attribute before processing admin actions.
+  \item Security property restored: Authentication integrity and role-based authorization.
+  \item Why this addresses root cause: The gateway now rejects unsigned/invalid tokens before they reach Lambda, and the Lambda denies admin actions to non-admin users even if the token is valid.
+\end{itemize}
+
+\section{Part 7: Code / Config Changes}
+Two changes were applied:
+\begin{enumerate}
+  \item \textbf{API Gateway:} Attached the existing \texttt{DVSA-Cognito-Authorizer} to the \texttt{/order} POST method and redeployed the API to the \texttt{Stage} stage.
+  \item \textbf{Lambda code:} Added an admin check in \texttt{order-manager.js}:
+\end{enumerate}
+\begin{lstlisting}[style=reportcode]
+case "admin-orders":
+  if (isAdmin === "true") {
+    payload = { user: user, data: req["data"] };
+    functionName = "DVSA-ADMIN-GET-ORDERS";
+  } else {
+    return deny(callback, 403,
+      "Unauthorized: Admin privileges required.");
+  }
+  break;
+\end{lstlisting}
+
+\evidencebox{../evidence/lesson-02/2_authorizer_config.png}{DVSA-Cognito-Authorizer configuration in API Gateway}
+\evidencebox{../evidence/lesson-02/3_method_security.png}{/order POST method with Cognito Authorizer attached}
+
+\section{Part 8: Verification After Fix}
+\begin{enumerate}
+  \item Re-sent the same \texttt{curl} command with a forged/invalid token signature.
+  \item API Gateway returned HTTP 401 \texttt{\{"message":"Unauthorized"\}}, proving tokens are now validated.
+  \item Redeployed API confirmed via the Stage deployment timestamp.
+\end{enumerate}
+\evidencebox{../evidence/lesson-02/4_exploit_blocked.png}{Exploit blocked---API returns 401 Unauthorized after fix}
+\evidencebox{../evidence/lesson-02/5_deployment_verfication.png}{API Gateway Stage redeployment confirmation}
+
+\section[Part 9: Structured Operation and Security Analysis]{Part 9: Structured Operation and\\Security Analysis}
+\subsection*{Table A}
+\begin{table}[H]
+  \small
+  \centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|}
+    \hline
+    \textbf{Intended rule(s)} & \textbf{Artifacts used to infer the rule} & \textbf{Normal evidence} & \textbf{Exploit evidence} \\
+    \hline
+    Only authenticated users with admin privileges may call the admin-orders action. &
+    API Gateway authorizer settings and Cognito user attributes. &
+    Non-admin users can only view their own orders. &
+    Non-admin user retrieves all users' orders via admin-orders. \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\subsection*{Table B}
+\begin{table}[H]
+  \footnotesize
+  \centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|Y|}
+    \hline
+    \textbf{Why the exploit is a deviation} & \textbf{Deviation class} & \textbf{Fix applied} & \textbf{Post-fix verification} & \textbf{Optional latency / timing note} \\
+    \hline
+    A regular user accessed admin-only data without admin role verification. &
+    Authentication failure / Missing authorization check. &
+    Attached Cognito Authorizer to API Gateway and added admin attribute check in Lambda. &
+    Forged tokens now return 401; non-admin valid tokens return 403 for admin actions. &
+    N/A \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{Part 10: Takeaway / Lessons Learned}
+API Gateway must enforce authentication at the edge before requests reach backend logic. Relying solely on application-layer checks creates a single point of failure. Defense in depth---combining gateway-level token validation with in-code role checks---ensures that even if one layer is misconfigured, the other still blocks unauthorized access.
+
+\clearpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Lesson 04: Insecure Cloud Configuration}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Part 1: Goal and Vulnerability Summary}
+The objective is to exploit an insecure S3 bucket configuration that allows unauthorized write access. The \texttt{dvsa-receipts-bucket} had ``Block all public access'' disabled and no restrictive bucket policy, allowing an external attacker to upload arbitrary files into the receipts bucket using the AWS CLI.
+
+\section{Part 2: Why This Works / Root Cause}
+The CloudFormation template deployed the receipts S3 bucket without enabling ``Block Public Access'' settings. Combined with overly permissive IAM policies on the Lambda execution role (which allowed \texttt{s3:PutObject} broadly), an attacker with any valid AWS credentials could write objects to the bucket. The bucket lacked both public access blocks and a deny policy for unauthorized principals.
+
+\section{Part 3: Environment and Setup}
+\begin{itemize}
+  \item S3 bucket: \texttt{dvsa-receipts-bucket-145292399251-us-east-1}
+  \item AWS services involved: S3, IAM, Lambda, CloudWatch.
+  \item Relevant resource: Receipts bucket permissions tab.
+  \item User or test context: External attacker with AWS CLI credentials (``hacker'' profile).
+  \item Tools used: AWS CLI (\texttt{aws s3 cp}), AWS Console (S3 permissions).
+\end{itemize}
+
+\section{Part 4: Reproduction Steps}
+\begin{enumerate}
+  \item Identified the receipts bucket name from the application's S3 listing.
+  \item Created a test file locally: \texttt{touch \textasciitilde/empty}.
+  \item Uploaded the file using AWS CLI: \texttt{aws s3 cp \textasciitilde/empty 's3://dvsa-receipts-bucket-.../1/test.txt' --profile hacker}.
+  \item Verified the file appeared in the S3 bucket via the AWS Console.
+  \item Additionally demonstrated path traversal by uploading files into arbitrary date-based subdirectories.
+\end{enumerate}
+
+\section{Part 5: Evidence and Proof}
+\begin{itemize}
+  \item Terminal showing successful \texttt{aws s3 cp} upload command.
+  \item S3 Console showing the attacker's uploaded file alongside legitimate receipts.
+  \item Bucket permissions page showing ``Block all public access'' was Off.
+\end{itemize}
+\evidencebox{../evidence/lesson-04/image.png}{S3 bucket listing showing DVSA buckets}
+\evidencebox{../evidence/lesson-04/image copy.png}{Terminal: attacker uploading file to receipts bucket}
+\evidencebox{../evidence/lesson-04/image copy 2.png}{S3 Console: attacker's file visible in bucket}
+\evidencebox{../evidence/lesson-04/image copy 3.png}{Terminal: path traversal uploads to arbitrary paths}
+\evidencebox{../evidence/lesson-04/image copy 4.png}{S3 Console: traversal artifacts visible in bucket}
+\evidencebox{../evidence/lesson-04/image copy 6.png}{Pre-fix: Block Public Access is OFF, no bucket policy}
+
+\section{Part 6: Fix Strategy / Probable Mitigation}
+\begin{itemize}
+  \item Fix location: S3 bucket settings---enable ``Block all public access'' on the receipts bucket.
+  \item Security property restored: Principle of least privilege for cloud storage; only authorized Lambda roles can write.
+  \item Why this addresses root cause: Enabling the block prevents any public or cross-account access regardless of ACLs or policies, closing the unauthorized write vector.
+\end{itemize}
+
+\section{Part 7: Code / Config Changes}
+Applied via S3 Console $\rightarrow$ Permissions $\rightarrow$ Block Public Access:
+\begin{itemize}
+  \item Enabled \textbf{Block all public access} (all four sub-settings checked).
+  \item Saved changes and confirmed the green ``On'' indicator.
+\end{itemize}
+
+\evidencebox{../evidence/lesson-04/image copy 7.png}{Enabling Block all public access on the receipts bucket}
+\evidencebox{../evidence/lesson-04/image copy 8.png}{Post-fix: Block Public Access confirmed ON}
+
+\section{Part 8: Verification After Fix}
+\begin{enumerate}
+  \item Re-attempted the same \texttt{aws s3 cp} upload command.
+  \item The upload was denied (Access Denied error).
+  \item Normal application flow (order placement and receipt generation) still works because the Lambda role retains its specific permissions.
+\end{enumerate}
+\evidencebox{../evidence/lesson-04/image copy 9.png}{Post-fix: Block Public Access settings confirmed active}
+\evidencebox{../evidence/lesson-04/image copy 5.png}{CloudWatch: legitimate receipt creation still functions}
+
+\section[Part 9: Structured Operation and Security Analysis]{Part 9: Structured Operation and\\Security Analysis}
+\subsection*{Table A}
+\begin{table}[H]
+  \small
+  \centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|}
+    \hline
+    \textbf{Intended rule(s)} & \textbf{Artifacts used to infer the rule} & \textbf{Normal evidence} & \textbf{Exploit evidence} \\
+    \hline
+    Only the DVSA-CREATE-RECEIPT Lambda should write objects to the receipts bucket. &
+    Application architecture and S3 bucket permissions tab. &
+    Receipts are created only after a successful order payment. &
+    External attacker uploads arbitrary files to the bucket via CLI. \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\subsection*{Table B}
+\begin{table}[H]
+  \footnotesize
+  \centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|Y|}
+    \hline
+    \textbf{Why the exploit is a deviation} & \textbf{Deviation class} & \textbf{Fix applied} & \textbf{Post-fix verification} & \textbf{Optional latency / timing note} \\
+    \hline
+    An unauthorized external principal wrote to an internal-only storage bucket. &
+    Insecure cloud configuration / Missing access controls. &
+    Enabled Block all public access on the S3 bucket. &
+    Upload attempts from external profiles now return Access Denied. &
+    N/A \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{Part 10: Takeaway / Lessons Learned}
+S3 buckets must always have ``Block Public Access'' enabled unless there is an explicit, documented reason for public access. Default-open configurations in CloudFormation templates are a common source of data breaches. Cloud security posture management tools should flag any bucket without this setting.
+
+\clearpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Lesson 07: Over-Privileged Function}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Part 1: Goal and Vulnerability Summary}
+The objective is to identify and remediate excessive IAM permissions on the \texttt{DVSA-SEND-RECEIPT} Lambda function's execution role. The role was granted \texttt{AmazonSESFullAccess} plus broad S3 and DynamoDB policies, far exceeding the function's actual needs (sending an email and reading a single receipt from S3).
+
+\section{Part 2: Why This Works / Root Cause}
+The CloudFormation template assigned three overly broad managed policies to the \texttt{SendReceiptFunctionRole}: \texttt{SendReceiptFunctionRolePolicy1} (S3 full), \texttt{SendReceiptFunctionRolePolicy2} (DynamoDB full), and \texttt{SendReceiptFunctionRolePolicy3} (SES full). If this Lambda were compromised, the attacker would inherit full S3 write, DynamoDB scan, and SES spam capabilities across the entire account.
+
+\section{Part 3: Environment and Setup}
+\begin{itemize}
+  \item IAM Role: \texttt{serverlessrepo-OWASP-DVSA-SendReceiptFunctionRole}
+  \item AWS services involved: IAM, Lambda, S3, DynamoDB, SES, CloudTrail.
+  \item Relevant resource: IAM Policy Simulator, CloudTrail trail (\texttt{dvsa-policygen-trail}).
+  \item User or test context: Security auditor reviewing role permissions.
+  \item Tools used: AWS Console (IAM, Policy Simulator, CloudTrail), \texttt{aws logs tail}.
+\end{itemize}
+
+\section{Part 4: Reproduction Steps}
+\begin{enumerate}
+  \item Opened IAM Policy Simulator for the \texttt{SendReceiptFunctionRole}.
+  \item Simulated \texttt{s3:GetObject} and \texttt{s3:PutObject}---both returned \textbf{allowed}.
+  \item Simulated DynamoDB actions (\texttt{PutItem}, \texttt{GetItem}, \texttt{DeleteItem}, \texttt{Scan})---all \textbf{allowed}.
+  \item This proves the role has far more access than the function needs (it only requires \texttt{s3:GetObject} on the receipts bucket and \texttt{ses:SendEmail}).
+\end{enumerate}
+
+\section{Part 5: Evidence and Proof}
+\begin{itemize}
+  \item Policy Simulator showing S3 PutObject is allowed (should be denied).
+  \item Policy Simulator showing full DynamoDB access is allowed (should be denied).
+  \item AmazonSESFullAccess policy granting access to all 467 SES services.
+\end{itemize}
+\evidencebox{../evidence/lesson-07/prefix_policy_simulator_s3_allowed.png}{Pre-fix: S3 GetObject and PutObject both ALLOWED}
+\evidencebox{../evidence/lesson-07/prefix_policy_simulator_s3_dynamodb_allowed.png}{Pre-fix: S3 and DynamoDB actions all ALLOWED}
+\evidencebox{../evidence/lesson-07/prefix_amazon_ses_full_access_policy.png}{AmazonSESFullAccess policy---grants full access to 4 SES services}
+
+\section{Part 6: Fix Strategy / Probable Mitigation}
+\begin{itemize}
+  \item Fix location: IAM---remove the three over-broad policies and replace with a single least-privilege inline policy.
+  \item Security property restored: Principle of least privilege---the function can only perform the exact actions it needs.
+  \item Why this addresses root cause: Even if the Lambda is compromised, the attacker can only read receipts from one bucket and send emails; no DynamoDB access, no S3 writes.
+\end{itemize}
+
+\section{Part 7: Code / Config Changes}
+Removed \texttt{SendReceiptFunctionRolePolicy1}, \texttt{Policy2}, and \texttt{Policy3}. Attached a new inline policy (\texttt{SendReceiptLeastPrivilegePolicy}):
+\begin{lstlisting}[style=reportcode]
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Sid": "AllowReceiptBucketReadOnly",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": "arn:aws:s3:::dvsa-receipts-bucket-...-us-east-1/*" },
+    { "Sid": "AllowReceiptBucketMetadataOnly",
+      "Effect": "Allow",
+      "Action": ["s3:GetBucketLocation"],
+      "Resource": "arn:aws:s3:::dvsa-receipts-bucket-...-us-east-1" },
+    { "Sid": "AllowSendReceiptEmailOnly",
+      "Effect": "Allow",
+      "Action": ["ses:SendEmail", "ses:SendRawEmail"],
+      "Resource": "*" },
+    { "Sid": "AllowGetCallerIdentityIfUsed",
+      "Effect": "Allow",
+      "Action": ["sts:GetCallerIdentity"],
+      "Resource": "*" }
+  ]
+}
+\end{lstlisting}
+
+\evidencebox{../evidence/lesson-07/postfix_send_receipt_role_policies.png}{Post-fix: role now has only AWSLambdaBasicExecutionRole + SendReceiptLeastPrivilegePolicy}
+
+\section{Part 8: Verification After Fix}
+\begin{enumerate}
+  \item Re-ran the Policy Simulator for \texttt{s3:GetObject} and \texttt{s3:PutObject} on the updated role.
+  \item Both S3 actions now show \textbf{implicitly denied} (no matching statements).
+  \item The Lambda still successfully processes receipts (confirmed via CloudWatch logs showing normal invocations).
+\end{enumerate}
+\evidencebox{../evidence/lesson-07/postfix_policy_simulator_s3_denied.png}{Post-fix: S3 GetObject and PutObject both DENIED in Policy Simulator}
+\evidencebox{../evidence/lesson-07/cloudwatch_send_receipt_lambda_invocation.png}{CloudWatch: DVSA-SEND-RECEIPT-EMAIL Lambda still invokes successfully}
+
+\section[Part 9: Structured Operation and Security Analysis]{Part 9: Structured Operation and\\Security Analysis}
+\subsection*{Table A}
+\begin{table}[H]
+  \small
+  \centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|}
+    \hline
+    \textbf{Intended rule(s)} & \textbf{Artifacts used to infer the rule} & \textbf{Normal evidence} & \textbf{Exploit evidence} \\
+    \hline
+    The SendReceipt function should only be able to read receipts from S3 and send emails via SES. &
+    Function source code analysis and CloudTrail activity logs. &
+    Function reads a receipt and sends an email---no other service calls. &
+    Policy Simulator shows the role can PutObject to any S3 bucket and scan all DynamoDB tables. \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\subsection*{Table B}
+\begin{table}[H]
+  \footnotesize
+  \centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|Y|}
+    \hline
+    \textbf{Why the exploit is a deviation} & \textbf{Deviation class} & \textbf{Fix applied} & \textbf{Post-fix verification} & \textbf{Optional latency / timing note} \\
+    \hline
+    The role grants capabilities far beyond what the function ever uses, violating least privilege. &
+    Excessive privilege / Over-permissioned IAM role. &
+    Replaced 3 broad policies with 1 scoped inline policy. &
+    Policy Simulator confirms unauthorized actions are now denied. &
+    Used CloudTrail Generate Policy feature to identify actual usage. \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{Part 10: Takeaway / Lessons Learned}
+Serverless functions should always follow the principle of least privilege. AWS provides tools like CloudTrail-based policy generation and IAM Access Analyzer to right-size permissions. Over-privileged roles amplify the blast radius of any code-level compromise.
+
+\clearpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Lesson 08: Logic Vulnerabilities}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Part 1: Goal and Vulnerability Summary}
+The objective is to exploit a logic flaw in the order update workflow that allows modification of an order's items \emph{after} payment has been processed. The \texttt{DVSA-ORDER-UPDATE} Lambda checks \texttt{orderStatus > 110} to block updates, but status 120 (paid) is the first disallowed state---meaning orders at status 100 (open) can still be modified during the billing window, enabling a race condition where the attacker changes items after payment but before processing.
+
+\section{Part 2: Why This Works / Root Cause}
+The status check in \texttt{update\_order.py} used \texttt{> 110} instead of \texttt{> 100}. This means an order at status 100 (open, currently being billed) can still have its items updated. An attacker can pay for cheap items, then immediately update the order to expensive items before the system moves the order to status 120.
+
+\section{Part 3: Environment and Setup}
+\begin{itemize}
+  \item API endpoint: \url{https://shfz8h7a28.execute-api.us-east-1.amazonaws.com/Stage/order}
+  \item AWS services involved: API Gateway, Lambda, DynamoDB.
+  \item Relevant function: \texttt{DVSA-ORDER-UPDATE} (\texttt{update\_order.py}).
+  \item User or test context: Authenticated regular user.
+  \item Tools used: Python \texttt{requests} script, Browser DevTools.
+\end{itemize}
+
+\section{Part 4: Reproduction Steps}
+\begin{enumerate}
+  \item Placed an order with a cheap item (e.g., item 1018, quantity 1, \$32).
+  \item While the order status was still 100 (open/billing in progress), sent an update request changing the items to expensive ones.
+  \item The update succeeded: \texttt{\{"status":"ok","msg":"cart updated"\}}.
+  \item The order was ultimately processed and shipped with the expensive items at the cheap price.
+\end{enumerate}
+
+\section{Part 5: Evidence and Proof}
+\begin{itemize}
+  \item Python exploit script sending rapid update requests to the order endpoint.
+  \item Terminal output showing successful ``cart updated'' responses on a paid order.
+  \item Orders page showing the processed order with modified items.
+\end{itemize}
+\evidencebox{../evidence/lesson-08/image.png}{Exploit script output: multiple successful cart updates on an active order}
+\evidencebox{../evidence/lesson-08/image copy 5.png}{Python exploit script sending update requests}
+\evidencebox{../evidence/lesson-08/image copy.png}{Orders page showing processed orders with modified items}
+
+\section{Part 6: Fix Strategy / Probable Mitigation}
+\begin{itemize}
+  \item Fix location: \texttt{DVSA-ORDER-UPDATE} Lambda, file \texttt{update\_order.py}.
+  \item Security property restored: Order integrity---once billing begins, order contents are immutable.
+  \item Why this addresses root cause: Changing the condition from \texttt{> 110} to \texttt{> 100} ensures that any order beyond the initial ``open'' state cannot be modified.
+\end{itemize}
+
+\section{Part 7: Code / Config Changes}
+In \texttt{update\_order.py}, the status check was tightened:
+\begin{lstlisting}[style=reportcode]
+# BEFORE (vulnerable):
+if response["Item"]["orderStatus"] > 110:
+    res = {"status": "err", "msg": "order already paid"}
+    return res
+
+# AFTER (fixed):
+if response["Item"]["orderStatus"] > 100:
+    res = {"status": "err", "msg": "order already paid or in progress"}
+    return res
+\end{lstlisting}
+
+\evidencebox{../evidence/lesson-08/image copy 2.png}{Vulnerable code (top) vs. fixed code (bottom)}
+\evidencebox{../evidence/lesson-08/image copy 3.png}{Full fixed update\_order.py deployed in Lambda}
+
+\section{Part 8: Verification After Fix}
+\begin{enumerate}
+  \item Re-ran the same Python exploit script after deploying the fix.
+  \item The API now returns \texttt{\{"status":"err","msg":"order already paid or in progress"\}}.
+  \item Normal order placement and updates before payment still work as expected.
+\end{enumerate}
+\evidencebox{../evidence/lesson-08/image copy 4.png}{Post-fix: update attempt on paid order returns error}
+
+\section[Part 9: Structured Operation and Security Analysis]{Part 9: Structured Operation and\\Security Analysis}
+\subsection*{Table A}
+\begin{table}[H]
+  \small
+  \centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|}
+    \hline
+    \textbf{Intended rule(s)} & \textbf{Artifacts used to infer the rule} & \textbf{Normal evidence} & \textbf{Exploit evidence} \\
+    \hline
+    An order's items must be immutable once payment processing begins (status $>$ 100). &
+    Order state machine in code comments and normal UI workflow. &
+    Users can modify cart only before clicking ``Pay''. &
+    Attacker modifies items after payment with a direct API call. \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\subsection*{Table B}
+\begin{table}[H]
+  \footnotesize
+  \centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|Y|}
+    \hline
+    \textbf{Why the exploit is a deviation} & \textbf{Deviation class} & \textbf{Fix applied} & \textbf{Post-fix verification} & \textbf{Optional latency / timing note} \\
+    \hline
+    Order contents were changed after billing started, violating order immutability. &
+    Logic flaw / Race condition. &
+    Changed status threshold from $>110$ to $>100$ in update\_order.py. &
+    Update requests on non-open orders now return an error. &
+    Exploit must be sent during the billing window (status 100$\rightarrow$120). \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{Part 10: Takeaway / Lessons Learned}
+Business logic flaws are among the hardest vulnerabilities to detect with automated tools because they require understanding the intended workflow. Status-machine transitions must be strictly enforced server-side, and boundary conditions (off-by-one errors in status checks) must be carefully reviewed.
+
+\clearpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Lesson 09: Vulnerable Dependencies}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Part 1: Goal and Vulnerability Summary}
+The objective is to identify and remediate a known-vulnerable third-party dependency (\texttt{node-serialize} v0.0.4) used by the \texttt{DVSA-ORDER-MANAGER} Lambda. This package has a publicly disclosed critical RCE vulnerability (CVE-2017-5941, CVSS 9.8) and should never be used in production.
+
+\section{Part 2: Why This Works / Root Cause}
+The application's \texttt{package.json} includes \texttt{node-serialize} version 0.0.4 as a dependency. This package uses JavaScript's \texttt{eval()} internally when deserializing objects, enabling arbitrary code execution. The developers chose this library without auditing it for known CVEs.
+
+\section{Part 3: Environment and Setup}
+\begin{itemize}
+  \item Lambda function: \texttt{DVSA-ORDER-MANAGER}.
+  \item AWS services involved: Lambda.
+  \item Relevant file: \texttt{package.json} in the Lambda deployment package.
+  \item User or test context: Security auditor reviewing dependencies.
+  \item Tools used: AWS Lambda Console (code editor), NVD (NIST National Vulnerability Database).
+\end{itemize}
+
+\section{Part 4: Reproduction Steps}
+\begin{enumerate}
+  \item Opened the \texttt{DVSA-ORDER-MANAGER} Lambda function in the AWS Console.
+  \item Inspected \texttt{package.json}---found \texttt{"node-serialize": "0.0.4"} listed.
+  \item Searched NVD for ``node-serialize''---found CVE-2017-5941 with CVSS 9.8 (Critical).
+  \item The CVE confirms that \texttt{unserialize()} enables arbitrary code execution via crafted payloads.
+\end{enumerate}
+
+\section{Part 5: Evidence and Proof}
+\begin{itemize}
+  \item Lambda Console showing \texttt{package.json} with the vulnerable dependency.
+  \item NVD page for CVE-2017-5941 showing the critical severity rating.
+\end{itemize}
+\evidencebox{../evidence/lesson-09/package_problem.png}{package.json showing node-serialize 0.0.4 dependency}
+\evidencebox{../evidence/lesson-09/public_proof.png}{CVE-2017-5941: CVSS 9.8 Critical---node-serialize RCE}
+
+\section{Part 6: Fix Strategy / Probable Mitigation}
+\begin{itemize}
+  \item Fix location: \texttt{package.json} in the \texttt{DVSA-ORDER-MANAGER} Lambda deployment package.
+  \item Security property restored: Elimination of known-vulnerable code paths from the runtime.
+  \item Why this addresses root cause: Removing the dependency entirely eliminates the \texttt{eval()}-based deserialization vector. The code was already updated (Lesson 01) to use \texttt{JSON.parse()}, so the library is no longer needed.
+\end{itemize}
+
+\section{Part 7: Code / Config Changes}
+Removed \texttt{node-serialize} from \texttt{package.json}:
+\begin{lstlisting}[style=reportcode]
+// BEFORE:
+"dependencies": {
+  "node-jose": "2.2.0",
+  "node-serialize": "0.0.4"
+}
+
+// AFTER:
+"dependencies": {
+  "node-jose": "2.2.0"
+}
+\end{lstlisting}
+Redeployed the Lambda function.
+
+\evidencebox{../evidence/lesson-09/post_fix.png}{Post-fix: package.json with node-serialize removed, Lambda deployed successfully}
+
+\section{Part 8: Verification After Fix}
+\begin{enumerate}
+  \item Confirmed \texttt{package.json} no longer lists \texttt{node-serialize}.
+  \item Lambda deployed successfully without the vulnerable package.
+  \item Normal order operations still function correctly (the code uses \texttt{JSON.parse()} and \texttt{node-jose} only).
+\end{enumerate}
+
+\section[Part 9: Structured Operation and Security Analysis]{Part 9: Structured Operation and\\Security Analysis}
+\subsection*{Table A}
+\begin{table}[H]
+  \small
+  \centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|}
+    \hline
+    \textbf{Intended rule(s)} & \textbf{Artifacts used to infer the rule} & \textbf{Normal evidence} & \textbf{Exploit evidence} \\
+    \hline
+    Application dependencies must not contain known critical CVEs. &
+    NVD database and package.json audit. &
+    A clean dependency tree with no known vulnerabilities. &
+    node-serialize 0.0.4 is present with CVE-2017-5941 (CVSS 9.8). \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\subsection*{Table B}
+\begin{table}[H]
+  \footnotesize
+  \centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|Y|}
+    \hline
+    \textbf{Why the exploit is a deviation} & \textbf{Deviation class} & \textbf{Fix applied} & \textbf{Post-fix verification} & \textbf{Optional latency / timing note} \\
+    \hline
+    A dependency with a publicly known critical RCE is shipped in production. &
+    Vulnerable dependency / Supply-chain risk. &
+    Removed node-serialize from package.json and redeployed. &
+    Lambda runs successfully without the vulnerable package. &
+    N/A \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{Part 10: Takeaway / Lessons Learned}
+Dependencies must be audited regularly using tools like \texttt{npm audit}, Snyk, or Dependabot. A single vulnerable package can undermine an otherwise secure application. The principle of minimal dependencies---only include what is actively used---reduces attack surface significantly.
+
+\clearpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Lesson 10: Unhandled Exceptions}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Part 1: Goal and Vulnerability Summary}
+The objective is to exploit unhandled exceptions in the \texttt{DVSA-ORDER-GET} Lambda function that leak internal implementation details (file paths, stack traces, variable names) to the client. When the function receives a malformed request missing required fields, it throws an unhandled \texttt{KeyError} that is returned verbatim to the caller.
+
+\section{Part 2: Why This Works / Root Cause}
+The original \texttt{get\_order.py} code directly accessed \texttt{event["orderId"]} without any try/except block or input validation. When the key is missing, Python raises a \texttt{KeyError} with a full traceback including the file path (\texttt{/var/task/get\_order.py}), line number, and variable names. This traceback was passed back through the Lambda response to the API client.
+
+\section{Part 3: Environment and Setup}
+\begin{itemize}
+  \item API endpoint: \url{https://shfz8h7a28.execute-api.us-east-1.amazonaws.com/Stage/order}
+  \item AWS services involved: API Gateway, Lambda, CloudWatch.
+  \item Relevant function: \texttt{DVSA-ORDER-GET} (\texttt{get\_order.py}).
+  \item User or test context: Authenticated user sending a malformed request.
+  \item Tools used: Browser DevTools, \texttt{curl}, CloudWatch Logs.
+\end{itemize}
+
+\section{Part 4: Reproduction Steps}
+\begin{enumerate}
+  \item Sent a request to the \texttt{/order} endpoint with \texttt{\{"action":"get"\}} (missing the \texttt{order-id} field).
+  \item The API returned a response containing the full Python traceback: \texttt{KeyError: 'orderId'} with file path and line number.
+  \item This information disclosure reveals internal implementation details to an attacker.
+\end{enumerate}
+
+\section{Part 5: Evidence and Proof}
+\begin{itemize}
+  \item Browser DevTools showing the error response with stack trace and internal file paths.
+  \item CloudWatch logs showing the unhandled KeyError with full traceback.
+\end{itemize}
+\evidencebox{../evidence/lesson-10/unhandeld exception.png}{Browser DevTools: error response leaks file path and stack trace}
+\evidencebox{../evidence/lesson-10/log proof.png}{CloudWatch: KeyError traceback with internal file path exposed}
+
+\section{Part 6: Fix Strategy / Probable Mitigation}
+\begin{itemize}
+  \item Fix location: \texttt{DVSA-ORDER-GET} Lambda, file \texttt{get\_order.py}.
+  \item Security property restored: Safe error handling---internal details never reach the client.
+  \item Why this addresses root cause: Wrapping the handler in try/except with a generic client-facing error message ensures stack traces are only logged server-side, never returned to callers.
+\end{itemize}
+
+\section{Part 7: Code / Config Changes}
+Rewrote \texttt{get\_order.py} with proper error handling:
+\begin{lstlisting}[style=reportcode]
+def safe_error(message="bad request"):
+    """Client-safe error response."""
+    return {"status": "err", "msg": message}
+
+def lambda_handler(event, context):
+    try:
+        order_id = get_required_field(event,
+            ["orderId", "order-id", "order_id"])
+        if not order_id:
+            return safe_error("bad request")
+        # ... normal logic ...
+    except Exception as e:
+        print("ERROR:", repr(e))  # log internally
+        return safe_error("internal error")
+\end{lstlisting}
+
+\section{Part 8: Verification After Fix}
+\begin{enumerate}
+  \item Sent the same malformed request: \texttt{\{"action":"get"\}} with no order-id.
+  \item The API now returns a generic \texttt{\{"status":"err","msg":"bad request"\}} with no stack trace.
+  \item CloudWatch logs show the error is logged internally with ``ERROR: Missing order ID'' but not exposed to the client.
+\end{enumerate}
+\evidencebox{../evidence/lesson-10/post fix.png}{Post-fix: API returns generic ``bad request'' error, no stack trace}
+\evidencebox{../evidence/lesson-10/post fix log.png}{Post-fix: CloudWatch shows safe internal logging only}
+
+\section[Part 9: Structured Operation and Security Analysis]{Part 9: Structured Operation and\\Security Analysis}
+\subsection*{Table A}
+\begin{table}[H]
+  \small
+  \centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|}
+    \hline
+    \textbf{Intended rule(s)} & \textbf{Artifacts used to infer the rule} & \textbf{Normal evidence} & \textbf{Exploit evidence} \\
+    \hline
+    Error responses must never expose internal implementation details (file paths, stack traces, variable names). &
+    Secure coding best practices and OWASP guidelines. &
+    The API returns generic error messages for invalid input. &
+    Malformed request returns full Python traceback with file path and line numbers. \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\subsection*{Table B}
+\begin{table}[H]
+  \footnotesize
+  \centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|Y|}
+    \hline
+    \textbf{Why the exploit is a deviation} & \textbf{Deviation class} & \textbf{Fix applied} & \textbf{Post-fix verification} & \textbf{Optional latency / timing note} \\
+    \hline
+    Internal file paths and code structure are leaked to external users. &
+    Unsafe error handling / Information disclosure. &
+    Added try/except with a generic safe\_error() response function. &
+    Same malformed request now returns only ``bad request'' with no internals. &
+    N/A \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{Part 10: Takeaway / Lessons Learned}
+Unhandled exceptions are a common vector for information disclosure in serverless applications. Every Lambda handler must wrap its logic in a try/except block that returns sanitized error messages to clients while logging full details server-side. This prevents attackers from fingerprinting the technology stack and discovering internal code paths.
+
+\clearpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \chapter*{Conclusion}
 \addcontentsline{toc}{chapter}{Conclusion}
-\placeholder{Summarize the project outcomes, the most important remediation themes, and the main security lessons learned from DVSA.}
+
+This project demonstrated that serverless architectures, while abstracting infrastructure management, still require rigorous security engineering across multiple layers. Through 10 lessons on the DVSA platform, we identified and remediated vulnerabilities spanning insecure deserialization (Lesson 1), broken authentication (Lesson 2), insecure cloud configuration (Lesson 4), over-privileged IAM roles (Lesson 7), business logic flaws (Lesson 8), vulnerable dependencies (Lesson 9), and unsafe error handling (Lesson 10).
+
+Key remediation themes:
+\begin{itemize}
+  \item \textbf{Defense in depth:} Security controls must exist at multiple layers---API Gateway, Lambda code, IAM policies, and cloud resource configuration.
+  \item \textbf{Least privilege:} IAM roles must be scoped to only the actions and resources each function actually uses.
+  \item \textbf{Input validation:} All user input must be treated as untrusted; use safe parsers and validate before processing.
+  \item \textbf{Dependency hygiene:} Regularly audit third-party packages for known CVEs and remove unused dependencies.
+  \item \textbf{Safe error handling:} Never expose internal details to clients; log verbosely server-side but respond generically.
+\end{itemize}
 
 \end{document}

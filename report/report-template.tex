@@ -298,17 +298,17 @@ The following lines were modified:
   \item \textbf{Line 11:} \texttt{var headers = JSON.parse(event.headers);} (Replaced unserialize)
 \end{itemize}
 
-\evidenceplaceholder{Insert screenshot of your corrected Lambda code showing JSON.parse here.}{Corrected Lambda code for Lesson 01}
+\evidencebox{../evidence/lesson-01/terminal-output.png}{Terminal showing the corrected Lambda code deployed with JSON.parse}
 
-% \section{Part 8: Verification After Fix}
+\section{Part 8: Verification After Fix}
 \begin{enumerate}
   \item After deploying the updated Lambda function, the exact same malicious \texttt{curl} command from Part 4 was executed in the terminal.
   \item The terminal again returned an \texttt{\{"message": "Internal server error"\}} (due to a missing authentication header failing later in the safe code).
   \item The CloudWatch logs for the \texttt{DVSA-ORDER-MANAGER} were reviewed again. The attack failed to execute, and the \texttt{FILE READ SUCCESS} message was no longer present in the logs, confirming the vulnerability is patched.
 \end{enumerate}
-\evidenceplaceholder{Insert screenshot of the clean CloudWatch logs here, showing no successful hack.}{Post-fix CloudWatch logs for Lesson 01}
+\evidencebox{../evidence/lesson-01/cloudwatch-log.png}{Post-fix CloudWatch logs confirming injected payload no longer executes}
 
-% \section{Part 9: Structured Operation and Security Analysis}
+\section[Part 9: Structured Operation and Security Analysis]{Part 9: Structured Operation and\\Security Analysis}
 \subsection*{Table A: Operational Analysis}
 \begin{table}[H]
   \small
@@ -457,6 +457,112 @@ API Gateway must enforce authentication at the edge before requests reach backen
 \clearpage
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Lesson 03: Sensitive Information Disclosure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Part 1: Goal and Vulnerability Summary}
+The \texttt{DVSA-ADMIN-GET-RECEIPT} Lambda function is intended for administrators only and generates signed S3 download URLs for receipt archives. However, it contains no authentication or authorization check. Any user who can invoke the function---via the Lambda console, CLI, or API---can retrieve a signed URL granting access to all customer receipts for any date, exposing names, addresses, items ordered, and payment amounts.
+
+\section{Part 2: Why This Works / Root Cause}
+The \texttt{lambda\_handler} in \texttt{admin\_get\_receipts.py} accepts \texttt{year}, \texttt{month}, and \texttt{day} parameters and immediately generates a pre-signed S3 URL. There is no verification of the caller's identity, no Cognito token check, and no role-based access control. The function trusts any request that reaches it.
+
+\section{Part 3: Environment and Setup}
+\begin{itemize}
+  \item Lambda function: \texttt{DVSA-ADMIN-GET-RECEIPT} (\texttt{admin\_get\_receipts.py}).
+  \item AWS services involved: Lambda, S3 (receipts bucket).
+  \item S3 bucket: \texttt{dvsa-receipts-bucket-145292399251-us-east-1}.
+  \item User or test context: Any authenticated user (non-admin).
+  \item Tools used: AWS Lambda Console (Test tab), Terminal (\texttt{curl}).
+\end{itemize}
+
+\section{Part 4: Reproduction Steps}
+\begin{enumerate}
+  \item Opened the \texttt{DVSA-ADMIN-GET-RECEIPT} Lambda in the AWS Console and inspected the source code---confirmed no authentication check exists.
+  \item Created a test event: \texttt{\{"year":"2026","month":"04","day":"24"\}}.
+  \item Clicked Test---the function returned a signed S3 URL pointing to a ZIP of all receipts from that date.
+  \item Opened the URL in a browser and successfully downloaded the ZIP file containing all customer receipt data.
+\end{enumerate}
+
+\section{Part 5: Evidence and Proof}
+\begin{itemize}
+  \item The Lambda test returned \texttt{\{"status":"ok","download\_url":"https://dvsa-receipts-bucket-..."\}} without any auth check.
+  \item The signed URL was valid and allowed downloading all receipts for the specified date.
+\end{itemize}
+\evidenceplaceholder{Lambda test result showing signed S3 URL returned without auth check.}{Pre-fix: Lambda returns signed download URL to any caller}
+\evidenceplaceholder{Safari download of 2026-04-24-dvsa-order-receipts.zip confirming file is real and accessible.}{Downloaded ZIP file containing all customer receipts}
+
+\section{Part 6: Fix Strategy / Probable Mitigation}
+\begin{itemize}
+  \item Fix location: \texttt{DVSA-ADMIN-GET-RECEIPT} Lambda, file \texttt{admin\_get\_receipts.py}.
+  \item Security property restored: Authorization---only verified admin users through API Gateway can invoke this function.
+  \item Why this addresses root cause: Two layers of protection were added: (1) block direct invocation if no \texttt{requestContext} is present, and (2) verify the caller's ARN against an allowed admin list when called through API Gateway.
+\end{itemize}
+
+\section{Part 7: Code / Config Changes}
+Added an authentication check at the start of \texttt{lambda\_handler}:
+\begin{lstlisting}[style=reportcode]
+def lambda_handler(event, context):
+    # Layer 1: Block direct invocation (no API Gateway context)
+    if "requestContext" not in event:
+        return {"status": "err",
+                "msg": "Access denied. Must be called through API Gateway."}
+
+    # Layer 2: Verify caller is an authorized admin
+    caller_arn = event["requestContext"]["identity"]["userArn"]
+    if caller_arn not in ALLOWED_ADMIN_ARNS:
+        return {"status": "err", "msg": "Access denied."}
+
+    # ... original receipt logic below ...
+\end{lstlisting}
+
+\section{Part 8: Verification After Fix}
+\begin{enumerate}
+  \item Re-ran the same Lambda test event---function returned ``Access denied. Must be called through API Gateway.'' in 1.61ms (previously 4353ms).
+  \item Sent the same request via \texttt{curl} as a regular user---API Gateway returned ``unknown action''.
+  \item Both direct and indirect invocations are now blocked for unauthorized users.
+\end{enumerate}
+\evidenceplaceholder{Lambda test returns ``Access denied. Must be called through API Gateway.'' (1.61ms).}{Post-fix: direct invocation blocked}
+\evidenceplaceholder{Terminal curl returns ``unknown action'' for regular user.}{Post-fix: API Gateway also blocks unauthorized access}
+
+\section[Part 9: Structured Operation and Security Analysis]{Part 9: Structured Operation and\\Security Analysis}
+\subsection*{Table A}
+\begin{table}[H]
+  \small\centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|}
+    \hline
+    \textbf{Intended rule(s)} & \textbf{Artifacts used to infer the rule} & \textbf{Normal evidence} & \textbf{Exploit evidence} \\
+    \hline
+    Only admin users should be able to invoke the receipt download function. Regular users must not access other users' receipts. &
+    Lambda source code and function naming convention (``ADMIN''). &
+    Only authorized admin users can invoke the function; regular users get an error. &
+    Any user invoked the function via Lambda console and received a signed URL to download all receipts. \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\subsection*{Table B}
+\begin{table}[H]
+  \footnotesize
+  \centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|Y|}
+    \hline
+    \textbf{Why the exploit is a deviation} & \textbf{Deviation class} & \textbf{Fix applied} & \textbf{Post-fix verification} & \textbf{Optional latency / timing note} \\
+    \hline
+    The function had no authentication at all; any caller could download all customer receipts. &
+    Sensitive data exposure / Missing authorization. &
+    Added requestContext check and admin ARN verification at the start of lambda\_handler. &
+    Direct invocation returns ``Access denied'' (1.61ms). API Gateway returns ``unknown action''. &
+    Response time dropped from 4353ms to 1.61ms (blocked immediately). \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{Part 10: Takeaway / Lessons Learned}
+Naming a function ``admin'' does not make it secure. Lambda functions can be invoked directly, bypassing API Gateway entirely. Authentication and authorization must be enforced inside the function code itself, not only at the gateway layer. A missing \texttt{if}-statement allowed any user to download all customers' personal data.
+
+\clearpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \chapter{Lesson 04: Insecure Cloud Configuration}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -559,6 +665,205 @@ Applied via S3 Console $\rightarrow$ Permissions $\rightarrow$ Block Public Acce
 
 \section{Part 10: Takeaway / Lessons Learned}
 S3 buckets must always have ``Block Public Access'' enabled unless there is an explicit, documented reason for public access. Default-open configurations in CloudFormation templates are a common source of data breaches. Cloud security posture management tools should flag any bucket without this setting.
+
+\clearpage
+
+\chapter{Lesson 05: Broken Access Control}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 
+\section{Part 1: Goal and Vulnerability Summary}
+The \texttt{DVSA-ORDER-MANAGER} Lambda dispatches order actions based on the \\texttt{action} and \\texttt{order-id} fields but does not verify that the requesting user owns the specified order. This IDOR allows any authenticated user to read another user's orders by supplying their order ID.
+ 
+\section{Part 2: Why This Works / Root Cause}
+The original \texttt{order-manager.js} extracts the \\texttt{user} from the JWT and the \\texttt{order-id} from the body, then passes both to downstream Lambdas without checking whether the JWT user matches the order owner in DynamoDB.
+ 
+\section{Part 3: Environment and Setup}
+\begin{itemize}
+  \item API endpoint: \url{https://shfz8h7a28.execute-api.us-east-1.amazonaws.com/Stage/order}
+  \item AWS services involved: API Gateway, Lambda, DynamoDB, Cognito.
+  \item Relevant function: \texttt{DVSA-ORDER-MANAGER} (\texttt{order-manager.js}).
+  \item User or test context: User B accessing User C s order with User B s valid token.
+  \item Tools used: Terminal (\texttt{curl}, \texttt{jq}).
+\end{itemize}
+ 
+\section{Part 4: Reproduction Steps}
+\begin{enumerate}
+  \item Logged in as User B and obtained the JWT (\texttt{TOKEN\_B}).
+  \item Obtained User C s order ID from a previous exploit or shared context.
+  \item Sent a \texttt{curl} POST with \texttt{\{\"action\":\"get\",\"order-id\":\"USER\_C\_ORDER\_ID\"\}} using User B s token.
+  \item The API returned User C s full order details (items, address, payment timestamp, userId) to User B.
+\end{enumerate}
+ 
+\section{Part 5: Evidence and Proof}
+\begin{itemize}
+  \item Terminal output showing User B successfully retrieving User C s order, including a different \texttt{userId}.
+\end{itemize}
+\evidencebox{../evidence/lesson-05/idor_exploit_other_user_order.png}{User B retrieves User C s full order details via IDOR}
+\evidencebox{../evidence/lesson-05/idor_exploit_admin_orders.png}{Subsequent request triggers a validation error confirming cross-user access path}
+ 
+\section{Part 6: Fix Strategy / Probable Mitigation}
+\begin{itemize}
+  \item Fix location: \texttt{DVSA-ORDER-MANAGER} Lambda, file \texttt{order-manager.js}.
+  \item Security property restored: Resource-level authorization---users can only access their own orders.
+  \item Why this addresses root cause: Before dispatching any order-scoped action, the Lambda now queries DynamoDB to verify the JWT user matches the order owner.
+\end{itemize}
+ 
+\section{Part 7: Code / Config Changes}
+Added ownership verification in \\texttt{order-manager.js}:
+\begin{lstlisting}[style=reportcode]
+async function userOwnsOrder(userId, orderId) {
+  const params = { TableName: \"dvsa-orders\", Key: { orderId: orderId } };
+  const result = await dynamodb.get(params).promise();
+  return result.Item && result.Item.userId === userId;
+}
+ 
+case \"get\":
+  if (!(await userOwnsOrder(user, req[\"order-id\"]))) {
+    return deny(callback, 403, \"could not find order\");
+  }
+  break;
+\end{lstlisting}
+ 
+\section{Part 8: Verification After Fix}
+\begin{enumerate}
+  \item Re-sent the same \texttt{curl} command as User B requesting User C s order.
+  \item The API now returns \texttt{\\{\"status\":\"err\",\"msg\":\"could not find order\"\\}}.
+  \item User B can still access their own orders normally.
+\end{enumerate}
+\evidencebox{../evidence/lesson-05/idor_postfix_access_denied.png}{Post-fix: User B s request for User C s order returns could not find order}
+ 
+\section[Part 9: Structured Operation and Security Analysis]{Part 9: Structured Operation and\\\\Security Analysis}
+\subsection*{Table A}
+\begin{table}[H]
+  \small\centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|}
+    \hline
+    \textbf{Intended rule(s)} & \textbf{Artifacts used to infer the rule} & \\textbf{Normal evidence} & \textbf{Exploit evidence} \\\\
+    \hline
+    A user may only read, update, or cancel orders that belong to them. &
+    Normal UI flow and DynamoDB schema (userId field). &
+    User B sees only their own orders in the My Orders page. &
+    User B retrieves User C s full order details by supplying C s order ID. \\\\
+    \hline
+  \end{tabularx}
+\end{table}
+ 
+\subsection*{Table B}
+\begin{table}[H]
+  \footnotesize\centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|Y|}
+    \hline
+    \textbf{Why the exploit is a deviation} & \textbf{Deviation class} & \textbf{Fix applied} & \textbf{Post-fix verification} & \textbf{Optional latency / timing note} \\\\
+    \hline
+    User B accessed User C s order data without ownership verification. &
+    Broken access control / IDOR. &
+    Added \texttt{userOwnsOrder()} check before dispatching order-scoped actions. &
+    Same request now returns could not find order; own orders still work. &
+    N/A \\\\
+    \hline
+  \end{tabularx}
+\end{table}
+ 
+\section{Part 10: Takeaway / Lessons Learned}
+IDOR vulnerabilities are among the most common web application flaws. The frontend may only show a user their own orders, but the API must independently enforce ownership checks. Server-side validation of resource ownership is mandatory for every object-level operation.
+ 
+\clearpage
+ 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Lesson 06: Denial of Service}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Part 1: Goal and Vulnerability Summary}
+The DVSA billing endpoint has no rate limiting or throttling. An attacker can send many concurrent billing requests using a multi-threaded script, consuming all available Lambda concurrency slots (10 in this account). Legitimate users' payment requests then fail with connection reset and internal server errors.
+
+\section{Part 2: Why This Works / Root Cause}
+The \texttt{DVSA-PAYMENT-PROCESSOR} Lambda has no reserved concurrency limit, and API Gateway has no usage plan or throttling configured. With only 10 concurrent executions available account-wide, sending 15 parallel requests saturates all slots, causing subsequent requests to be dropped.
+
+\section{Part 3: Environment and Setup}
+\begin{itemize}
+  \item Billing endpoint: \url{https://shfz8h7a28.execute-api.us-east-1.amazonaws.com/Stage/order}
+  \item AWS services involved: API Gateway, Lambda.
+  \item Relevant function: \texttt{DVSA-PAYMENT-PROCESSOR}.
+  \item Account total concurrency: 10 concurrent executions.
+  \item Tools used: Python 3 (\texttt{threading} + \texttt{requests}), Browser DevTools, AWS Lambda Console, API Gateway Console.
+\end{itemize}
+
+\section{Part 4: Reproduction Steps}
+\begin{enumerate}
+  \item Placed a new order in DVSA and reached the payment page.
+  \item Retrieved the order ID from the browser console.
+  \item Created a Python script sending 15 parallel billing requests using \texttt{threading}.
+  \item Clicked Submit on the payment page and immediately ran the script.
+  \item The browser Network tab showed 12+ simultaneous requests; the terminal showed \texttt{Connection reset by peer} errors and \texttt{Internal server error} responses.
+\end{enumerate}
+
+\section{Part 5: Evidence and Proof}
+\begin{itemize}
+  \item Terminal output showing parallel requests overwhelming the billing service.
+  \item Lambda metrics showing throttles and error spikes during the attack.
+\end{itemize}
+\evidencebox{../evidence/lesson-06/dos_payment_page.png}{Terminal: 50+ concurrent requests with 500/401 status codes proving service overload}
+\evidencebox{../evidence/lesson-06/dos_network_flood.png}{Lambda account metrics: throttles spike to 83, success rate drops to 50\%}
+\evidencebox{../evidence/lesson-06/dos_confirmation_page.png}{Lambda invocations chart showing spike during DoS attack}
+
+\section{Part 6: Fix Strategy / Probable Mitigation}
+\begin{itemize}
+  \item Fix location: API Gateway---add stage-level throttling to limit requests per second.
+  \item Security property restored: Availability---the billing service remains usable under flood conditions.
+  \item Why this addresses root cause: Throttling at the API Gateway layer rejects excess requests before they reach Lambda, preventing concurrency exhaustion.
+\end{itemize}
+
+\section{Part 7: Code / Config Changes}
+Applied via API Gateway Console $\rightarrow$ Stages $\rightarrow$ dvsa $\rightarrow$ Additional Settings:
+\begin{itemize}
+  \item Enabled \textbf{Throttling} on the \texttt{dvsa} stage.
+  \item Set \textbf{Rate} = 10 requests/second, \textbf{Burst} = 2.
+  \item Saved and confirmed the stage update.
+\end{itemize}
+\evidencebox{../evidence/lesson-06/dos_terminal_errors.png}{API Gateway stage: Throttling enabled with Rate=1 req/s and Burst=1}
+\evidencebox{../evidence/lesson-06/add throttle.png}{API Gateway stage successfully updated with throttling settings (Rate=10, Burst=2)}
+
+\section{Part 8: Verification After Fix}
+\begin{enumerate}
+  \item Re-ran the same multi-threaded DoS script after enabling throttling.
+  \item Excess requests were rejected at the API Gateway layer before reaching Lambda.
+  \item Normal single-user billing still works correctly---the rate limit only triggers under flood conditions.
+\end{enumerate}
+
+\section[Part 9: Structured Operation and Security Analysis]{Part 9: Structured Operation and\\Security Analysis}
+\subsection*{Table A}
+\begin{table}[H]
+  \small\centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|}
+    \hline
+    \textbf{Intended rule(s)} & \textbf{Artifacts used to infer the rule} & \textbf{Normal evidence} & \textbf{Exploit evidence} \\
+    \hline
+    The billing service must remain available to all users. No single user should consume all billing capacity. &
+    Python threading script, Lambda concurrency settings, API Gateway throttling. &
+    A single user submits one billing request; payment succeeds normally. &
+    15 parallel requests overwhelm Lambda; connection reset and internal errors returned. \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\subsection*{Table B}
+\begin{table}[H]
+  \footnotesize\centering
+  \begin{tabularx}{\textwidth}{|Y|Y|Y|Y|Y|}
+    \hline
+    \textbf{Why the exploit is a deviation} & \textbf{Deviation class} & \textbf{Fix applied} & \textbf{Post-fix verification} & \textbf{Optional latency / timing note} \\
+    \hline
+    One attacker consumed all Lambda concurrency, denying service to legitimate users. &
+    Denial of Service / Missing rate limiting. &
+    Enabled API Gateway stage throttling (Rate=10/s, Burst=2). &
+    Excess requests rejected at gateway; normal billing unaffected. &
+    No impact on normal usage. \\
+    \hline
+  \end{tabularx}
+\end{table}
+
+\section{Part 10: Takeaway / Lessons Learned}
+Availability is a core security property alongside confidentiality and integrity. Serverless systems are especially vulnerable to DoS because Lambda concurrency is finite and shared across functions. Rate limiting at API Gateway is a simple and effective first line of defense for critical endpoints like billing.
 
 \clearpage
 
@@ -1009,7 +1314,7 @@ Unhandled exceptions are a common vector for information disclosure in serverles
 \chapter*{Conclusion}
 \addcontentsline{toc}{chapter}{Conclusion}
 
-This project demonstrated that serverless architectures, while abstracting infrastructure management, still require rigorous security engineering across multiple layers. Through 10 lessons on the DVSA platform, we identified and remediated vulnerabilities spanning insecure deserialization (Lesson 1), broken authentication (Lesson 2), insecure cloud configuration (Lesson 4), over-privileged IAM roles (Lesson 7), business logic flaws (Lesson 8), vulnerable dependencies (Lesson 9), and unsafe error handling (Lesson 10).
+This project demonstrated that serverless architectures, while abstracting infrastructure management, still require rigorous security engineering across multiple layers. Through 10 lessons on the DVSA platform, we identified and remediated vulnerabilities spanning insecure deserialization (Lesson 1), broken authentication (Lesson 2), sensitive data exposure (Lesson 3), insecure cloud configuration (Lesson 4), broken access control (Lesson 5), denial of service (Lesson 6), over-privileged IAM roles (Lesson 7), business logic flaws (Lesson 8), vulnerable dependencies (Lesson 9), and unsafe error handling (Lesson 10).
 
 Key remediation themes:
 \begin{itemize}

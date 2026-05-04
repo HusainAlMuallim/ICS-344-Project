@@ -1,0 +1,9 @@
+Team Number: 2
+
+Team Members:
+1. Husain Al Muallim (202163730), section 1
+2. Ali Al Qatari (202279780), section 2
+3. Abdulwahed Zuhair Adi (202256380), section 2
+
+repo link: https://github.com/HusainAlMuallim/ICS-344-Project
+recorded videos link: https://youtube.com/playlist?list=PLIAFDAdt27ajJnNVfKXjI33fLDfAL9SdO&si=BOnHmB5HbY44atXT
